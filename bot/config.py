@@ -15,13 +15,12 @@ def _required(name: str) -> str:
 
 
 DISCORD_TOKEN = _required("DISCORD_TOKEN")
-ANTHROPIC_API_KEY = _required("ANTHROPIC_API_KEY")
 GIT_REPO_URL = _required("GIT_REPO_URL")
 GIT_TOKEN = _required("GIT_TOKEN")
 
 PROJECT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "project")
 
-GIT_BRANCH = os.environ.get("GIT_BRANCH", "main")
+GIT_BRANCH = os.environ.get("GIT_BRANCH", "master")
 GIT_USER_NAME = os.environ.get("GIT_USER_NAME", "Vibez Bot")
 GIT_USER_EMAIL = os.environ.get("GIT_USER_EMAIL", "vibez@bot")
 CHANNEL_IDS = [

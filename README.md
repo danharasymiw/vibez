@@ -30,7 +30,7 @@ cp -r starter/ /path/to/your-project/
 cd /path/to/your-project
 git init && git add -A && git commit -m "init"
 git remote add origin <your-repo-url>
-git push -u origin main
+git push -u origin master
 ```
 
 Deploy it to Railway and add a PostgreSQL database.

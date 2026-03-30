@@ -5,7 +5,7 @@ This is a collaborative vibe-coded project. A Discord bot takes instructions fro
 ## Environment
 - Runtime: Python
 - Database: PostgreSQL (connection string in `DATABASE_URL` env var)
-- Hosted on Railway.app — auto-deploys on push to main
+- Hosted on Railway.app — auto-deploys on push to master
 
 ## Rules
 1. Keep things simple and fun. Working code > perfect code.
