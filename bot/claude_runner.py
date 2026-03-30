@@ -23,7 +23,6 @@ async def run_claude(
     env = {
         "HOME": os.environ.get("HOME", ""),
         "PATH": os.environ.get("PATH", ""),
-        "DATABASE_URL": os.environ.get("DATABASE_URL", ""),
     }
     # Use explicit API key if provided, otherwise Claude CLI uses its own auth (~/.claude/)
     api_key = os.environ.get("ANTHROPIC_API_KEY")

@@ -92,7 +92,6 @@ In Discord:
 | `GIT_USER_NAME` | No | `Vibez Bot` | Git commit author name |
 | `GIT_USER_EMAIL` | No | `vibez@bot` | Git commit author email |
 | `DISCORD_CHANNEL_IDS` | No | | Comma-separated channel IDs to restrict the bot to |
-| `DATABASE_URL` | No | | PostgreSQL connection string (passed through to Claude Code) |
 | `MAX_BUDGET_PER_REQUEST` | No | `5` | Max USD per Claude invocation |
 | `MAX_QUEUE_SIZE` | No | `10` | Max queued requests |
 | `CLAUDE_TIMEOUT_MS` | No | `600000` | Timeout per request in ms (10 min) |
