@@ -116,8 +116,16 @@ async def init_repo() -> None:
         print("Bot repo ready", flush=True)
 
 
+def _branch_for(cwd: str | None) -> str:
+    """Return the correct branch for the given working directory."""
+    if cwd == config.BOT_DIR:
+        return config.BOT_GIT_BRANCH
+    return config.GIT_BRANCH
+
+
 async def commit_and_push(message: str, cwd: str | None = None) -> GitResult:
     target = cwd or config.PROJECT_DIR
+    branch = _branch_for(target)
     status = await _run_git("status", "--porcelain", cwd=target)
     if not status.strip():
         return GitResult()
@@ -130,15 +138,16 @@ async def commit_and_push(message: str, cwd: str | None = None) -> GitResult:
 
     pushed = False
     try:
-        await _run_git("push", "origin", config.GIT_BRANCH, cwd=target, with_auth=True)
+        await _run_git("push", "origin", branch, cwd=target, with_auth=True)
         pushed = True
-    except RuntimeError:
+    except RuntimeError as push_err:
+        print(f"[git] push failed: {push_err}", flush=True)
         try:
-            await _run_git("pull", "--rebase", "origin", config.GIT_BRANCH, cwd=target, with_auth=True)
-            await _run_git("push", "origin", config.GIT_BRANCH, cwd=target, with_auth=True)
+            await _run_git("pull", "--rebase", "origin", branch, cwd=target, with_auth=True)
+            await _run_git("push", "origin", branch, cwd=target, with_auth=True)
             pushed = True
         except RuntimeError as e:
-            print(f"Failed to push after rebase: {e}")
+            print(f"[git] push failed after rebase: {e}", flush=True)
 
     return GitResult(
         committed=True,
