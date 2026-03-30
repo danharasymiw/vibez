@@ -1,0 +1,95 @@
+import asyncio
+import json
+import os
+from dataclasses import dataclass
+from typing import Awaitable, Callable, Optional
+
+from bot import config
+
+
+@dataclass
+class ClaudeResult:
+    success: bool
+    result: str
+    cost_usd: float
+    duration_ms: float
+    num_turns: int
+
+
+async def run_claude(
+    instruction: str,
+    on_progress: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> ClaudeResult:
+    env = {
+        "HOME": os.environ.get("HOME", ""),
+        "PATH": os.environ.get("PATH", ""),
+        "ANTHROPIC_API_KEY": config.ANTHROPIC_API_KEY,
+        "DATABASE_URL": os.environ.get("DATABASE_URL", ""),
+    }
+
+    proc = await asyncio.create_subprocess_exec(
+        "claude",
+        "-p",
+        instruction,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--dangerously-skip-permissions",
+        "--max-turns",
+        "50",
+        cwd=config.PROJECT_DIR,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    stdout_lines: list[str] = []
+    last_progress = ""
+
+    try:
+        async with asyncio.timeout(config.CLAUDE_TIMEOUT):
+            async for line_bytes in proc.stdout:
+                line = line_bytes.decode()
+                stdout_lines.append(line)
+
+                try:
+                    event = json.loads(line)
+                    if event.get("type") == "assistant":
+                        for block in event.get("message", {}).get("content", []):
+                            if block.get("type") == "tool_use":
+                                progress = f"Using tool: {block['name']}"
+                                if progress != last_progress and on_progress:
+                                    last_progress = progress
+                                    await on_progress(progress)
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+            await proc.wait()
+    except TimeoutError:
+        proc.kill()
+        raise RuntimeError("Claude Code timed out")
+
+    # Parse result from the last stream-json event
+    for line in reversed(stdout_lines):
+        try:
+            event = json.loads(line)
+            if event.get("type") == "result":
+                return ClaudeResult(
+                    success=not event.get("is_error")
+                    and event.get("subtype") == "success",
+                    result=event.get("result", ""),
+                    cost_usd=event.get("total_cost_usd", 0),
+                    duration_ms=event.get("duration_ms", 0),
+                    num_turns=event.get("num_turns", 0),
+                )
+        except json.JSONDecodeError:
+            pass
+
+    stdout_text = "".join(stdout_lines)
+    if proc.returncode == 0:
+        return ClaudeResult(True, stdout_text[-500:], 0, 0, 0)
+
+    stderr = await proc.stderr.read() if proc.stderr else b""
+    raise RuntimeError(
+        f"Claude exited with code {proc.returncode}: {stderr.decode()[-500:]}"
+    )
