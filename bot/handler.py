@@ -12,6 +12,9 @@ from bot.task_queue import TaskQueue
 
 queue = TaskQueue()
 
+# Maps Discord thread ID -> Claude session ID for conversation continuity
+thread_sessions: dict[int, str] = {}
+
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
@@ -94,9 +97,13 @@ async def deploy_and_fix_loop(thread: discord.Thread, instruction: str, author_n
 
 @client.event
 async def on_message(message: discord.Message):
+    print(f"[msg] author={message.author} bot={message.author.bot} channel={message.channel} type={message.channel.type}", flush=True)
+
     if message.author.bot:
+        print(f"[skip] bot message", flush=True)
         return
     if not client.user or client.user not in message.mentions:
+        print(f"[skip] not mentioned (mentions={[u.name for u in message.mentions]})", flush=True)
         return
 
     # If the message is in a thread, use that thread. Otherwise create one.
@@ -104,9 +111,11 @@ async def on_message(message: discord.Message):
 
     if not is_thread:
         if config.CHANNEL_IDS and str(message.channel.id) not in config.CHANNEL_IDS:
+            print(f"[skip] channel {message.channel.id} not in allowed list {config.CHANNEL_IDS}", flush=True)
             return
 
     instruction = re.sub(rf"<@!?{client.user.id}>", "", message.content).strip()
+    print(f"[instruction] '{instruction}' from {message.author} in {'thread' if is_thread else 'channel'}", flush=True)
 
     if not instruction:
         await message.reply("Give me something to work with! Mention me with coding instructions.")
@@ -150,7 +159,11 @@ async def on_message(message: discord.Message):
                 except Exception:
                     pass
 
-        result = await run_claude(instruction, on_progress)
+        session_id = thread_sessions.get(thread.id)
+        result = await run_claude(instruction, on_progress, session_id=session_id)
+
+        if result.session_id:
+            thread_sessions[thread.id] = result.session_id
 
         if not result.success:
             await thread.send(format_result(

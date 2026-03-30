@@ -14,11 +14,13 @@ class ClaudeResult:
     cost_usd: float
     duration_ms: float
     num_turns: int
+    session_id: str
 
 
 async def run_claude(
     instruction: str,
     on_progress: Optional[Callable[[str], Awaitable[None]]] = None,
+    session_id: Optional[str] = None,
 ) -> ClaudeResult:
     env = {
         "HOME": os.environ.get("HOME", ""),
@@ -29,7 +31,7 @@ async def run_claude(
     if api_key:
         env["ANTHROPIC_API_KEY"] = api_key
 
-    proc = await asyncio.create_subprocess_exec(
+    args = [
         "claude",
         "-p",
         instruction,
@@ -39,6 +41,13 @@ async def run_claude(
         "--dangerously-skip-permissions",
         "--max-turns",
         "50",
+    ]
+
+    if session_id:
+        args += ["--resume", session_id]
+
+    proc = await asyncio.create_subprocess_exec(
+        *args,
         cwd=config.PROJECT_DIR,
         env=env,
         stdout=asyncio.subprocess.PIPE,
@@ -83,13 +92,25 @@ async def run_claude(
                     cost_usd=event.get("total_cost_usd", 0),
                     duration_ms=event.get("duration_ms", 0),
                     num_turns=event.get("num_turns", 0),
+                    session_id=event.get("session_id", ""),
                 )
+        except json.JSONDecodeError:
+            pass
+
+    # Try to find session_id from any system event
+    found_session_id = ""
+    for line in stdout_lines:
+        try:
+            event = json.loads(line)
+            if event.get("session_id"):
+                found_session_id = event["session_id"]
+                break
         except json.JSONDecodeError:
             pass
 
     stdout_text = "".join(stdout_lines)
     if proc.returncode == 0:
-        return ClaudeResult(True, stdout_text[-500:], 0, 0, 0)
+        return ClaudeResult(True, stdout_text[-500:], 0, 0, 0, found_session_id)
 
     stderr = await proc.stderr.read() if proc.stderr else b""
     raise RuntimeError(
