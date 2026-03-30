@@ -159,8 +159,10 @@ async def on_message(message: discord.Message):
                 except Exception:
                     pass
 
+        print(f"[claude] starting for thread {thread.id}", flush=True)
         session_id = thread_sessions.get(thread.id)
         result = await run_claude(instruction, on_progress, session_id=session_id)
+        print(f"[claude] finished success={result.success} cost=${result.cost_usd:.4f} duration={result.duration_ms:.0f}ms session={result.session_id}", flush=True)
 
         if result.session_id:
             thread_sessions[thread.id] = result.session_id
@@ -177,9 +179,11 @@ async def on_message(message: discord.Message):
             ))
             return
 
+        print(f"[git] committing...", flush=True)
         git_result = await commit_and_push(
             f"vibez: {instruction[:72]}\n\nRequested by: {message.author.display_name}"
         )
+        print(f"[git] committed={git_result.committed} pushed={git_result.pushed} hash={git_result.commit_hash}", flush=True)
 
         if not git_result.committed:
             await thread.send(f"**No changes** — Claude finished but didn't modify any files.\n\n{truncate(result.result, 1500)}")
@@ -204,6 +208,7 @@ async def on_message(message: discord.Message):
     try:
         await queue.run(process)
     except Exception as e:
+        print(f"[error] {e}", flush=True)
         try:
             await thread.send(format_error(str(e)))
         except Exception:
