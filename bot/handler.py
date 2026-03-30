@@ -137,6 +137,20 @@ async def on_message(message: discord.Message):
         await handle_logs(thread)
         return
 
+    # Detect "fix bot" prefix
+    is_bot_fix = False
+    if instruction.lower().startswith("fix bot"):
+        if not config.BOT_REPO_URL:
+            await thread.send("BOT_REPO_URL is not configured.")
+            return
+        is_bot_fix = True
+        instruction = instruction[7:].lstrip(":").strip()
+        if not instruction:
+            await thread.send("What should I fix? e.g. `fix bot: the heartbeat isn't updating`")
+            return
+
+    target_dir = config.BOT_DIR if is_bot_fix else config.PROJECT_DIR
+
     if queue.pending >= config.MAX_QUEUE_SIZE:
         await thread.send("Queue is full — try again in a bit.")
         return
@@ -148,7 +162,8 @@ async def on_message(message: discord.Message):
     async def process():
         cooking = random.choice(["🍳", "🔥", "🧑‍🍳", "⚡", "🧪", "🪄", "🤖", "💅", "🫡"])
         await message.add_reaction(cooking)
-        await thread.send("On it...")
+        label = "bot" if is_bot_fix else "project"
+        await thread.send(f"On it... (targeting {label})")
 
         progress_msg = None
         last_tool = "Thinking..."
@@ -181,10 +196,10 @@ async def on_message(message: discord.Message):
 
         heartbeat_task = asyncio.create_task(heartbeat())
 
-        print(f"[claude] starting for thread {thread.id}", flush=True)
+        print(f"[claude] starting for thread {thread.id} target={label}", flush=True)
         session_id = thread_sessions.get(thread.id)
         try:
-            result = await run_claude(instruction, on_progress, session_id=session_id)
+            result = await run_claude(instruction, on_progress, session_id=session_id, cwd=target_dir)
         finally:
             heartbeat_running = False
             heartbeat_task.cancel()
@@ -208,7 +223,8 @@ async def on_message(message: discord.Message):
 
         print(f"[git] committing...", flush=True)
         git_result = await commit_and_push(
-            f"vibez: {instruction[:72]}\n\nRequested by: {message.author.display_name}"
+            f"vibez: {instruction[:72]}\n\nRequested by: {message.author.display_name}",
+            cwd=target_dir,
         )
         print(f"[git] committed={git_result.committed} pushed={git_result.pushed} hash={git_result.commit_hash}", flush=True)
 
@@ -232,7 +248,10 @@ async def on_message(message: discord.Message):
 
         if git_result.pushed:
             await thread.send("Pushed — waiting for deploy...")
-            await deploy_and_fix_loop(thread, instruction, message.author.display_name)
+            if is_bot_fix:
+                await thread.send("Bot will redeploy automatically. I might go offline briefly. 👋")
+            else:
+                await deploy_and_fix_loop(thread, instruction, message.author.display_name)
         elif git_result.committed:
             await thread.send("Committed but push failed — deploy won't trigger.")
 

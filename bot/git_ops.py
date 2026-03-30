@@ -54,7 +54,7 @@ def _setup_credential_helper() -> str:
     return path
 
 
-async def _run_git(*args: str, with_auth: bool = False) -> str:
+async def _run_git(*args: str, cwd: str | None = None, with_auth: bool = False) -> str:
     cmd = ["git"]
     if with_auth:
         helper = _setup_credential_helper()
@@ -63,7 +63,7 @@ async def _run_git(*args: str, with_auth: bool = False) -> str:
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
-        cwd=config.PROJECT_DIR,
+        cwd=cwd or config.PROJECT_DIR,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -73,57 +73,69 @@ async def _run_git(*args: str, with_auth: bool = False) -> str:
     return stdout.decode()
 
 
-async def init_repo() -> None:
-    """Clone the repo if needed, then configure identity. Token never stored in remote URL."""
-    is_repo = os.path.isdir(os.path.join(config.PROJECT_DIR, ".git"))
+async def _clone_repo(repo_url: str, target_dir: str, branch: str) -> None:
+    """Clone a repo, then strip the token from the remote URL."""
+    os.makedirs(target_dir, exist_ok=True)
+    auth_url = _auth_url(repo_url, config.GIT_TOKEN)
+    proc = await asyncio.create_subprocess_exec(
+        "git", "clone", "-b", branch, auth_url, target_dir,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"git clone failed: {stderr.decode()}")
+    await _run_git("remote", "set-url", "origin", repo_url, cwd=target_dir)
+    print(f"Cloned {repo_url} into {target_dir}", flush=True)
+
+
+async def _setup_repo(repo_url: str, target_dir: str, branch: str) -> None:
+    """Clone or pull a repo, configure git identity."""
+    is_repo = os.path.isdir(os.path.join(target_dir, ".git"))
 
     if not is_repo:
-        os.makedirs(config.PROJECT_DIR, exist_ok=True)
-        # Clone using auth URL, then immediately reset remote to clean URL
-        auth_url = _auth_url(config.GIT_REPO_URL, config.GIT_TOKEN)
-        proc = await asyncio.create_subprocess_exec(
-            "git", "clone", "-b", config.GIT_BRANCH, auth_url, config.PROJECT_DIR,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(f"git clone failed: {stderr.decode()}")
-        # Replace remote with clean URL (no token)
-        await _run_git("remote", "set-url", "origin", config.GIT_REPO_URL)
-        print(f"Cloned {config.GIT_REPO_URL} into {config.PROJECT_DIR}", flush=True)
+        await _clone_repo(repo_url, target_dir, branch)
     else:
-        # Ensure remote is the clean URL (no token)
-        await _run_git("remote", "set-url", "origin", config.GIT_REPO_URL)
+        await _run_git("remote", "set-url", "origin", repo_url, cwd=target_dir)
         try:
-            await _run_git("pull", "origin", config.GIT_BRANCH, with_auth=True)
+            await _run_git("pull", "origin", branch, cwd=target_dir, with_auth=True)
         except RuntimeError as e:
             print(f"Warning: pull on startup failed: {e}", flush=True)
 
-    await _run_git("config", "user.name", config.GIT_USER_NAME)
-    await _run_git("config", "user.email", config.GIT_USER_EMAIL)
-    print("Git configured", flush=True)
+    await _run_git("config", "user.name", config.GIT_USER_NAME, cwd=target_dir)
+    await _run_git("config", "user.email", config.GIT_USER_EMAIL, cwd=target_dir)
 
 
-async def commit_and_push(message: str) -> GitResult:
-    status = await _run_git("status", "--porcelain")
+async def init_repo() -> None:
+    """Clone the project repo (and optionally the bot repo) on startup."""
+    await _setup_repo(config.GIT_REPO_URL, config.PROJECT_DIR, config.GIT_BRANCH)
+    print("Project repo ready", flush=True)
+
+    if config.BOT_REPO_URL:
+        await _setup_repo(config.BOT_REPO_URL, config.BOT_DIR, config.GIT_BRANCH)
+        print("Bot repo ready", flush=True)
+
+
+async def commit_and_push(message: str, cwd: str | None = None) -> GitResult:
+    target = cwd or config.PROJECT_DIR
+    status = await _run_git("status", "--porcelain", cwd=target)
     if not status.strip():
         return GitResult()
 
     files_changed = [line.strip() for line in status.strip().split("\n") if line.strip()]
 
-    await _run_git("add", "-A")
-    await _run_git("commit", "-m", message)
-    commit_hash = (await _run_git("rev-parse", "--short", "HEAD")).strip()
+    await _run_git("add", "-A", cwd=target)
+    await _run_git("commit", "-m", message, cwd=target)
+    commit_hash = (await _run_git("rev-parse", "--short", "HEAD", cwd=target)).strip()
 
     pushed = False
     try:
-        await _run_git("push", "origin", config.GIT_BRANCH, with_auth=True)
+        await _run_git("push", "origin", config.GIT_BRANCH, cwd=target, with_auth=True)
         pushed = True
     except RuntimeError:
         try:
-            await _run_git("pull", "--rebase", "origin", config.GIT_BRANCH, with_auth=True)
-            await _run_git("push", "origin", config.GIT_BRANCH, with_auth=True)
+            await _run_git("pull", "--rebase", "origin", config.GIT_BRANCH, cwd=target, with_auth=True)
+            await _run_git("push", "origin", config.GIT_BRANCH, cwd=target, with_auth=True)
             pushed = True
         except RuntimeError as e:
             print(f"Failed to push after rebase: {e}")

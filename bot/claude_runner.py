@@ -21,6 +21,7 @@ async def run_claude(
     instruction: str,
     on_progress: Optional[Callable[[str], Awaitable[None]]] = None,
     session_id: Optional[str] = None,
+    cwd: Optional[str] = None,
 ) -> ClaudeResult:
     env = {
         "HOME": os.environ.get("HOME", ""),
@@ -50,7 +51,7 @@ async def run_claude(
 
     proc = await asyncio.create_subprocess_exec(
         *args,
-        cwd=config.PROJECT_DIR,
+        cwd=cwd or config.PROJECT_DIR,
         env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
