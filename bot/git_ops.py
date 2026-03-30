@@ -112,7 +112,7 @@ async def init_repo() -> None:
     print("Project repo ready", flush=True)
 
     if config.BOT_REPO_URL:
-        await _setup_repo(config.BOT_REPO_URL, config.BOT_DIR, config.GIT_BRANCH)
+        await _setup_repo(config.BOT_REPO_URL, config.BOT_DIR, config.BOT_GIT_BRANCH)
         print("Bot repo ready", flush=True)
 
 
