@@ -94,12 +94,8 @@ async def get_build_logs(deployment_id: str) -> str:
     )
 
 
-async def wait_for_deployment(timeout: float = 300) -> tuple[str, str | None]:
-    """Poll until a *new* deployment succeeds or fails. Returns (status, deployment_id)."""
-    # Snapshot the current latest deployment so we can ignore it
-    current = await get_latest_deployment()
-    previous_id = current["id"] if current else None
-
+async def wait_for_deployment(previous_id: str | None, timeout: float = 300) -> tuple[str, str | None]:
+    """Poll until a deployment newer than previous_id succeeds or fails."""
     elapsed = 0.0
     interval = 10.0
 

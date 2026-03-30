@@ -48,13 +48,13 @@ async def handle_logs(thread: discord.Thread):
         await thread.send(format_error(str(e)))
 
 
-async def deploy_and_fix_loop(thread: discord.Thread, instruction: str, author_name: str):
+async def deploy_and_fix_loop(thread: discord.Thread, instruction: str, author_name: str, previous_deploy_id: str | None = None):
     """After pushing, wait for deploy. If it fails, feed logs to Claude and retry."""
     if not railway.is_configured():
         return
 
     for attempt in range(config.MAX_FIX_ATTEMPTS):
-        deploy_status, deployment_id = await railway.wait_for_deployment()
+        deploy_status, deployment_id = await railway.wait_for_deployment(previous_deploy_id)
 
         if deploy_status in ("SUCCESS", "READY"):
             await thread.send("**Deploy: successful** 🚀")
@@ -92,6 +92,7 @@ async def deploy_and_fix_loop(thread: discord.Thread, instruction: str, author_n
             await thread.send("Fix committed but push failed.")
             return
 
+        previous_deploy_id = deployment_id
         await thread.send(f"Fix pushed — waiting for deploy again...")
 
     await thread.send(f"**Deploy:** still failing after {config.MAX_FIX_ATTEMPTS} fix attempts. 😵")
@@ -221,6 +222,15 @@ async def on_message(message: discord.Message):
             ))
             return
 
+        # Snapshot current deployment before push so we can detect the new one
+        pre_push_deploy = None
+        if railway.is_configured() and not is_bot_fix:
+            try:
+                d = await railway.get_latest_deployment()
+                pre_push_deploy = d["id"] if d else None
+            except Exception:
+                pass
+
         print(f"[git] committing...", flush=True)
         git_result = await commit_and_push(
             f"vibez: {instruction[:72]}\n\nRequested by: {message.author.display_name}",
@@ -251,7 +261,7 @@ async def on_message(message: discord.Message):
             if is_bot_fix:
                 await thread.send("Bot will redeploy automatically. I might go offline briefly. 👋")
             else:
-                await deploy_and_fix_loop(thread, instruction, message.author.display_name)
+                await deploy_and_fix_loop(thread, instruction, message.author.display_name, pre_push_deploy)
         elif git_result.committed:
             await thread.send("Committed but push failed — deploy won't trigger.")
 
