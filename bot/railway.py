@@ -9,15 +9,15 @@ API_URL = "https://backboard.railway.com/graphql/v2"
 
 def is_configured() -> bool:
     return bool(
-        config.RAILWAY_API_TOKEN
-        and config.RAILWAY_SERVICE_ID
-        and config.RAILWAY_ENVIRONMENT_ID
+        config.DEPLOY_RAILWAY_TOKEN
+        and config.DEPLOY_RAILWAY_SERVICE
+        and config.DEPLOY_RAILWAY_ENVIRONMENT
     )
 
 
 async def _query(query: str, variables: dict | None = None) -> dict:
     headers = {
-        "Authorization": f"Bearer {config.RAILWAY_API_TOKEN}",
+        "Authorization": f"Bearer {config.DEPLOY_RAILWAY_TOKEN}",
         "Content-Type": "application/json",
     }
     payload: dict = {"query": query}
@@ -49,8 +49,8 @@ async def get_latest_deployment() -> dict | None:
         """,
         {
             "input": {
-                "serviceId": config.RAILWAY_SERVICE_ID,
-                "environmentId": config.RAILWAY_ENVIRONMENT_ID,
+                "serviceId": config.DEPLOY_RAILWAY_SERVICE,
+                "environmentId": config.DEPLOY_RAILWAY_ENVIRONMENT,
             }
         },
     )
