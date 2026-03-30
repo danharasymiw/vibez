@@ -1,3 +1,4 @@
+import random
 import re
 import time
 
@@ -117,7 +118,10 @@ async def on_message(message: discord.Message):
     instruction = re.sub(rf"<@!?{client.user.id}>", "", message.content).strip()
     print(f"[instruction] '{instruction}' from {message.author} in {'thread' if is_thread else 'channel'}", flush=True)
 
+    await message.add_reaction("👀")
+
     if not instruction:
+        await message.add_reaction("❓")
         await message.reply("Give me something to work with! Mention me with coding instructions.")
         return
 
@@ -141,6 +145,8 @@ async def on_message(message: discord.Message):
         await thread.send(f"Queued — #{position + 1} in line.")
 
     async def process():
+        cooking = random.choice(["🍳", "🔥", "🧑‍🍳", "⚡", "🧪", "🪄", "🤖", "💅", "🫡"])
+        await message.add_reaction(cooking)
         await thread.send("On it...")
 
         last_update = 0.0
@@ -168,6 +174,7 @@ async def on_message(message: discord.Message):
             thread_sessions[thread.id] = result.session_id
 
         if not result.success:
+            await message.add_reaction("💀")
             await thread.send(format_result(
                 success=False,
                 summary=result.result,
@@ -186,9 +193,11 @@ async def on_message(message: discord.Message):
         print(f"[git] committed={git_result.committed} pushed={git_result.pushed} hash={git_result.commit_hash}", flush=True)
 
         if not git_result.committed:
+            await message.add_reaction("🤷")
             await thread.send(f"**No changes** — Claude finished but didn't modify any files.\n\n{truncate(result.result, 1500)}")
             return
 
+        await message.add_reaction("✅")
         await thread.send(
             format_result(
                 success=result.success,
@@ -210,6 +219,7 @@ async def on_message(message: discord.Message):
     except Exception as e:
         print(f"[error] {e}", flush=True)
         try:
+            await message.add_reaction("💥")
             await thread.send(format_error(str(e)))
         except Exception:
             pass
