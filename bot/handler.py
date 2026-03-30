@@ -98,8 +98,13 @@ async def on_message(message: discord.Message):
         return
     if not client.user or client.user not in message.mentions:
         return
-    if config.CHANNEL_IDS and str(message.channel.id) not in config.CHANNEL_IDS:
-        return
+
+    # If the message is in a thread, use that thread. Otherwise create one.
+    is_thread = isinstance(message.channel, discord.Thread)
+
+    if not is_thread:
+        if config.CHANNEL_IDS and str(message.channel.id) not in config.CHANNEL_IDS:
+            return
 
     instruction = re.sub(rf"<@!?{client.user.id}>", "", message.content).strip()
 
@@ -107,9 +112,11 @@ async def on_message(message: discord.Message):
         await message.reply("Give me something to work with! Mention me with coding instructions.")
         return
 
-    # Create a thread for this request
-    thread_name = instruction[:97] + "..." if len(instruction) > 100 else instruction
-    thread = await message.create_thread(name=thread_name)
+    if is_thread:
+        thread = message.channel
+    else:
+        thread_name = instruction[:97] + "..." if len(instruction) > 100 else instruction
+        thread = await message.create_thread(name=thread_name)
 
     # Manual log check
     if instruction.lower() in ("logs", "check logs", "show logs", "get logs"):
