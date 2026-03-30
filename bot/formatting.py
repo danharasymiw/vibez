@@ -14,22 +14,22 @@ def format_result(
     commit_hash: str,
     pushed: bool,
 ) -> str:
-    status = "Done" if success else "Failed"
+    status = "✅ Done" if success else "❌ Failed"
     duration = f"{duration_ms / 1000:.1f}"
     cost = f"{cost_usd:.4f}"
 
-    msg = f"**{status}** ({duration}s | ${cost})\n"
+    msg = f"**{status}** ⏱️ {duration}s | 💰 ${cost}\n"
 
     if files_changed:
-        files = "\n".join(f"`{f}`" for f in files_changed[:15])
-        msg += f"\n**Files changed:**\n{files}"
+        files = "\n".join(f"📄 `{f}`" for f in files_changed[:15])
+        msg += f"\n**📁 Files changed:**\n{files}"
         if len(files_changed) > 15:
             msg += f"\n... and {len(files_changed) - 15} more"
 
     if commit_hash:
-        msg += f"\n\n**Commit:** `{commit_hash}`"
+        msg += f"\n\n**🔗 Commit:** `{commit_hash}`"
         if not pushed:
-            msg += " (push failed)"
+            msg += " ⚠️ (push failed)"
 
     if summary:
         msg += f"\n\n{truncate(summary, 800)}"
@@ -38,4 +38,4 @@ def format_result(
 
 
 def format_error(error: str) -> str:
-    return f"**Error**\n```\n{truncate(error, 1800)}\n```"
+    return f"**💥 Error**\n```\n{truncate(error, 1800)}\n```"
