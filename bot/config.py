@@ -22,7 +22,8 @@ PROJECT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 BOT_REPO_URL = os.environ.get("BOT_REPO_URL")
 BOT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot-source")
 
-GIT_BRANCH = os.environ.get("GIT_BRANCH", "master")
+GIT_BRANCH = os.environ.get("GIT_BRANCH", "main")
+BOT_GIT_BRANCH = os.environ.get("BOT_GIT_BRANCH", "master")
 GIT_USER_NAME = os.environ.get("GIT_USER_NAME", "Vibez Bot")
 GIT_USER_EMAIL = os.environ.get("GIT_USER_EMAIL", "vibez@bot")
 CHANNEL_IDS = [
