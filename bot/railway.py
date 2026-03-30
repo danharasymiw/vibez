@@ -4,7 +4,7 @@ import aiohttp
 
 from bot import config
 
-API_URL = "https://backboard.railway.com/graphql/v2"
+API_URL = "https://backboard.railway.app/graphql/v2"
 
 
 def is_configured() -> bool:
@@ -95,21 +95,27 @@ async def get_build_logs(deployment_id: str) -> str:
 
 
 async def wait_for_deployment(timeout: float = 300) -> tuple[str, str | None]:
-    """Poll until the latest deployment succeeds or fails. Returns (status, deployment_id)."""
+    """Poll until a *new* deployment succeeds or fails. Returns (status, deployment_id)."""
+    # Snapshot the current latest deployment so we can ignore it
+    current = await get_latest_deployment()
+    previous_id = current["id"] if current else None
+
     elapsed = 0.0
     interval = 10.0
 
     while elapsed < timeout:
-        deployment = await get_latest_deployment()
-        if deployment:
-            status = deployment["status"]
-            if status in ("SUCCESS", "READY"):
-                return status, deployment["id"]
-            if status in ("FAILED", "CRASHED"):
-                return status, deployment["id"]
-
         await asyncio.sleep(interval)
         elapsed += interval
+
+        deployment = await get_latest_deployment()
+        if not deployment or deployment["id"] == previous_id:
+            continue
+
+        status = deployment["status"]
+        if status in ("SUCCESS", "READY"):
+            return status, deployment["id"]
+        if status in ("FAILED", "CRASHED"):
+            return status, deployment["id"]
 
     return "TIMEOUT", None
 
