@@ -91,17 +91,18 @@ async def init_repo() -> None:
             raise RuntimeError(f"git clone failed: {stderr.decode()}")
         # Replace remote with clean URL (no token)
         await _run_git("remote", "set-url", "origin", config.GIT_REPO_URL)
-        print(f"Cloned {config.GIT_REPO_URL} into {config.PROJECT_DIR}")
+        print(f"Cloned {config.GIT_REPO_URL} into {config.PROJECT_DIR}", flush=True)
     else:
         # Ensure remote is the clean URL (no token)
         await _run_git("remote", "set-url", "origin", config.GIT_REPO_URL)
         try:
             await _run_git("pull", "origin", config.GIT_BRANCH, with_auth=True)
         except RuntimeError as e:
-            print(f"Warning: pull on startup failed: {e}")
+            print(f"Warning: pull on startup failed: {e}", flush=True)
 
     await _run_git("config", "user.name", config.GIT_USER_NAME)
     await _run_git("config", "user.email", config.GIT_USER_EMAIL)
+    print("Git configured", flush=True)
 
 
 async def commit_and_push(message: str) -> GitResult:

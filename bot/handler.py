@@ -19,56 +19,54 @@ client = discord.Client(intents=intents)
 
 @client.event
 async def on_ready():
-    print(f"Logged in as {client.user}")
+    print(f"Logged in as {client.user}", flush=True)
 
 
-async def handle_logs(message: discord.Message):
+async def handle_logs(thread: discord.Thread):
     """Fetch and display Railway logs."""
     if not railway.is_configured():
-        await message.reply("Railway is not configured — set RAILWAY_API_TOKEN, RAILWAY_SERVICE_ID, and RAILWAY_ENVIRONMENT_ID.")
+        await thread.send("Railway is not configured — set RAILWAY_API_TOKEN, RAILWAY_SERVICE_ID, and RAILWAY_ENVIRONMENT_ID.")
         return
-
-    status_msg = await message.reply("Fetching logs...")
 
     try:
         deployment = await railway.get_latest_deployment()
         if not deployment:
-            await status_msg.edit(content="No deployments found.")
+            await thread.send("No deployments found.")
             return
 
         logs = await railway.get_all_logs(deployment["id"])
         status = deployment["status"]
-        await status_msg.edit(
-            content=f"**Deploy status:** {status}\n```\n{truncate(logs, 1800)}\n```"
+        await thread.send(
+            f"**Deploy status:** {status}\n```\n{truncate(logs, 1800)}\n```"
         )
     except Exception as e:
-        await status_msg.edit(content=format_error(str(e)))
+        await thread.send(format_error(str(e)))
 
 
-async def deploy_and_fix_loop(status_msg: discord.Message, instruction: str, author_name: str):
+async def deploy_and_fix_loop(thread: discord.Thread, instruction: str, author_name: str):
     """After pushing, wait for deploy. If it fails, feed logs to Claude and retry."""
     if not railway.is_configured():
         return
 
     for attempt in range(config.MAX_FIX_ATTEMPTS):
-        await status_msg.edit(content="Waiting for deploy...")
+        await thread.send("Waiting for deploy...")
 
         deploy_status, deployment_id = await railway.wait_for_deployment()
 
         if deploy_status in ("SUCCESS", "READY"):
-            await status_msg.edit(content=f"{status_msg.content}\n\n**Deploy:** successful")
+            await thread.send("**Deploy:** successful")
             return
 
         if not deployment_id:
-            await status_msg.edit(content=f"{status_msg.content}\n\n**Deploy:** timed out waiting")
+            await thread.send("**Deploy:** timed out waiting")
             return
 
         # Deploy failed — fetch logs and try to fix
         logs = await railway.get_all_logs(deployment_id)
         remaining = config.MAX_FIX_ATTEMPTS - attempt - 1
 
-        await status_msg.edit(
-            content=f"**Deploy failed.** Attempting auto-fix ({remaining} attempts left)...\n```\n{truncate(logs, 800)}\n```"
+        await thread.send(
+            f"**Deploy failed.** Attempting auto-fix ({remaining} attempts left)...\n```\n{truncate(logs, 800)}\n```"
         )
 
         fix_instruction = (
@@ -80,7 +78,7 @@ async def deploy_and_fix_loop(status_msg: discord.Message, instruction: str, aut
         result = await run_claude(fix_instruction)
 
         if not result.success:
-            await status_msg.edit(content=f"{status_msg.content}\n\nClaude failed to fix: {truncate(result.result, 500)}")
+            await thread.send(f"Claude failed to fix: {truncate(result.result, 500)}")
             return
 
         git_result = await commit_and_push(
@@ -88,10 +86,10 @@ async def deploy_and_fix_loop(status_msg: discord.Message, instruction: str, aut
         )
 
         if not git_result.pushed:
-            await status_msg.edit(content=f"{status_msg.content}\n\nFix committed but push failed.")
+            await thread.send("Fix committed but push failed.")
             return
 
-    await status_msg.edit(content=f"{status_msg.content}\n\n**Deploy:** still failing after {config.MAX_FIX_ATTEMPTS} fix attempts.")
+    await thread.send(f"**Deploy:** still failing after {config.MAX_FIX_ATTEMPTS} fix attempts.")
 
 
 @client.event
@@ -109,47 +107,66 @@ async def on_message(message: discord.Message):
         await message.reply("Give me something to work with! Mention me with coding instructions.")
         return
 
+    # Create a thread for this request
+    thread_name = instruction[:97] + "..." if len(instruction) > 100 else instruction
+    thread = await message.create_thread(name=thread_name)
+
     # Manual log check
     if instruction.lower() in ("logs", "check logs", "show logs", "get logs"):
-        await handle_logs(message)
+        await handle_logs(thread)
         return
 
     if queue.pending >= config.MAX_QUEUE_SIZE:
-        await message.reply("Queue is full — try again in a bit.")
+        await thread.send("Queue is full — try again in a bit.")
         return
 
     position = queue.pending
-    status_msg = await message.reply(
-        f"Queued — #{position + 1} in line." if position > 0 else "On it..."
-    )
+    if position > 0:
+        await thread.send(f"Queued — #{position + 1} in line.")
 
     async def process():
-        if position > 0:
-            try:
-                await status_msg.edit(content="On it...")
-            except Exception:
-                pass
+        await thread.send("On it...")
 
         last_update = 0.0
+        progress_msg = None
 
         async def on_progress(text: str):
-            nonlocal last_update
+            nonlocal last_update, progress_msg
             now = time.time()
             if now - last_update > 5:
                 last_update = now
                 try:
-                    await status_msg.edit(content=text)
+                    if progress_msg:
+                        await progress_msg.edit(content=text)
+                    else:
+                        progress_msg = await thread.send(text)
                 except Exception:
                     pass
 
         result = await run_claude(instruction, on_progress)
 
+        if not result.success:
+            await thread.send(format_result(
+                success=False,
+                summary=result.result,
+                files_changed=[],
+                cost_usd=result.cost_usd,
+                duration_ms=result.duration_ms,
+                commit_hash="",
+                pushed=False,
+            ))
+            return
+
         git_result = await commit_and_push(
             f"vibez: {instruction[:72]}\n\nRequested by: {message.author.display_name}"
         )
 
-        await status_msg.edit(
-            content=format_result(
+        if not git_result.committed:
+            await thread.send(f"**No changes** — Claude finished but didn't modify any files.\n\n{truncate(result.result, 1500)}")
+            return
+
+        await thread.send(
+            format_result(
                 success=result.success,
                 summary=result.result,
                 files_changed=git_result.files_changed,
@@ -162,12 +179,12 @@ async def on_message(message: discord.Message):
 
         # Auto-fix loop if Railway is configured and we pushed
         if git_result.pushed:
-            await deploy_and_fix_loop(status_msg, instruction, message.author.display_name)
+            await deploy_and_fix_loop(thread, instruction, message.author.display_name)
 
     try:
         await queue.run(process)
     except Exception as e:
         try:
-            await status_msg.edit(content=format_error(str(e)))
+            await thread.send(format_error(str(e)))
         except Exception:
             pass
