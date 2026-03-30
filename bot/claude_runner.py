@@ -39,6 +39,8 @@ async def run_claude(
         "stream-json",
         "--verbose",
         "--dangerously-skip-permissions",
+        "--model",
+        config.CLAUDE_MODEL,
         "--max-turns",
         "50",
     ]

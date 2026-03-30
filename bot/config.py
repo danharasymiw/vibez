@@ -28,6 +28,7 @@ CHANNEL_IDS = [
     for s in os.environ.get("DISCORD_CHANNEL_IDS", "").split(",")
     if s.strip()
 ]
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "sonnet")
 MAX_BUDGET_PER_REQUEST = float(os.environ.get("MAX_BUDGET_PER_REQUEST", "5"))
 MAX_QUEUE_SIZE = int(os.environ.get("MAX_QUEUE_SIZE", "10"))
 CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT_MS", "600000")) / 1000

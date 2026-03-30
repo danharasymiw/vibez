@@ -1,3 +1,4 @@
+import asyncio
 import random
 import re
 import time
@@ -53,16 +54,14 @@ async def deploy_and_fix_loop(thread: discord.Thread, instruction: str, author_n
         return
 
     for attempt in range(config.MAX_FIX_ATTEMPTS):
-        await thread.send("Waiting for deploy...")
-
         deploy_status, deployment_id = await railway.wait_for_deployment()
 
         if deploy_status in ("SUCCESS", "READY"):
-            await thread.send("**Deploy:** successful")
+            await thread.send("**Deploy: successful** 🚀")
             return
 
         if not deployment_id:
-            await thread.send("**Deploy:** timed out waiting")
+            await thread.send("**Deploy:** timed out waiting for status")
             return
 
         # Deploy failed — fetch logs and try to fix
@@ -93,7 +92,9 @@ async def deploy_and_fix_loop(thread: discord.Thread, instruction: str, author_n
             await thread.send("Fix committed but push failed.")
             return
 
-    await thread.send(f"**Deploy:** still failing after {config.MAX_FIX_ATTEMPTS} fix attempts.")
+        await thread.send(f"Fix pushed — waiting for deploy again...")
+
+    await thread.send(f"**Deploy:** still failing after {config.MAX_FIX_ATTEMPTS} fix attempts. 😵")
 
 
 @client.event
@@ -149,25 +150,44 @@ async def on_message(message: discord.Message):
         await message.add_reaction(cooking)
         await thread.send("On it...")
 
-        last_update = 0.0
         progress_msg = None
+        last_tool = "Thinking..."
+        start_time = time.time()
+
+        async def update_progress_msg(text: str):
+            nonlocal progress_msg
+            try:
+                if progress_msg:
+                    await progress_msg.edit(content=text)
+                else:
+                    progress_msg = await thread.send(text)
+            except Exception:
+                pass
 
         async def on_progress(text: str):
-            nonlocal last_update, progress_msg
-            now = time.time()
-            if now - last_update > 5:
-                last_update = now
-                try:
-                    if progress_msg:
-                        await progress_msg.edit(content=text)
-                    else:
-                        progress_msg = await thread.send(text)
-                except Exception:
-                    pass
+            nonlocal last_tool
+            last_tool = text
+
+        # Heartbeat task that updates Discord every 10 seconds
+        heartbeat_running = True
+
+        async def heartbeat():
+            while heartbeat_running:
+                await asyncio.sleep(10)
+                if not heartbeat_running:
+                    break
+                elapsed = int(time.time() - start_time)
+                await update_progress_msg(f"{last_tool} ({elapsed}s)")
+
+        heartbeat_task = asyncio.create_task(heartbeat())
 
         print(f"[claude] starting for thread {thread.id}", flush=True)
         session_id = thread_sessions.get(thread.id)
-        result = await run_claude(instruction, on_progress, session_id=session_id)
+        try:
+            result = await run_claude(instruction, on_progress, session_id=session_id)
+        finally:
+            heartbeat_running = False
+            heartbeat_task.cancel()
         print(f"[claude] finished success={result.success} cost=${result.cost_usd:.4f} duration={result.duration_ms:.0f}ms session={result.session_id}", flush=True)
 
         if result.session_id:
@@ -210,9 +230,11 @@ async def on_message(message: discord.Message):
             )
         )
 
-        # Auto-fix loop if Railway is configured and we pushed
         if git_result.pushed:
+            await thread.send("Pushed — waiting for deploy...")
             await deploy_and_fix_loop(thread, instruction, message.author.display_name)
+        elif git_result.committed:
+            await thread.send("Committed but push failed — deploy won't trigger.")
 
     try:
         await queue.run(process)
