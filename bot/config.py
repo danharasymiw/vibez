@@ -37,7 +37,7 @@ MAX_QUEUE_SIZE = int(os.environ.get("MAX_QUEUE_SIZE", "10"))
 CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT_MS", "600000")) / 1000
 
 # Railway (optional — enables deploy status checking and auto-fix)
-DEPLOY_RAILWAY_TOKEN = os.environ.get("DEPLOY_RAILWAY_TOKEN")
+DEPLOY_RAILWAY_TOKEN = (os.environ.get("DEPLOY_RAILWAY_TOKEN") or "").strip() or None
 DEPLOY_RAILWAY_SERVICE = os.environ.get("DEPLOY_RAILWAY_SERVICE")
 DEPLOY_RAILWAY_ENVIRONMENT = os.environ.get("DEPLOY_RAILWAY_ENVIRONMENT")
 MAX_FIX_ATTEMPTS = int(os.environ.get("MAX_FIX_ATTEMPTS", "3"))
