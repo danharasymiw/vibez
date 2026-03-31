@@ -18,3 +18,10 @@ A Discord bot for collaborative vibe coding with Claude Code.
 - `bot/claude_runner.py` — Claude Code CLI invocation
 - `bot/git_ops.py` — git commit and push
 - `bot/formatting.py` — Discord message formatting
+
+## Response Style
+- Do not use markdown tables in chat replies — they don't render in Discord
+- Use plain bullet lists or inline text instead when summarizing changes
+
+## Workflow
+- Before committing: review all diffs, check logic correctness, then commit
