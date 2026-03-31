@@ -113,11 +113,84 @@ The bot will:
 
 Reply in the thread to give follow-up instructions — each thread maintains its own Claude session.
 
-You can also check deploy logs anytime:
+## Commands
+
+### Coding
 
 ```
-@VibezBot check logs
+@VibezBot <instruction>
 ```
+Run Claude Code on your project. Creates a thread, makes changes, commits, and pushes.
+
+```
+@VibezBot <instruction> --model <name>
+```
+Override the Claude model for this request (e.g. `--model opus`, `--model haiku`).
+
+```
+@VibezBot fix bot: <instruction>
+```
+Run Claude Code on the bot's own source repo instead of the project. Requires `BOT_REPO_URL` to be configured.
+
+### Queue Management
+
+```
+@VibezBot cancel
+```
+Cancel the last queued (not yet started) request.
+
+```
+@VibezBot clear
+```
+Clear all pending requests from the queue.
+
+### Deploy Logs
+
+```
+@VibezBot logs
+```
+Fetch and display the latest Railway deployment status and logs. Also accepts `check logs`, `show logs`, or `get logs`.
+
+### Planning
+
+```
+@VibezBot plan bot: <high-level task>
+```
+Ask Claude to break a task down into a sprint with individual subtasks. Tasks are saved to the database.
+
+```
+@VibezBot plan bot: list
+```
+List all sprints.
+
+```
+@VibezBot plan bot: show <sprint_id>
+```
+Show the tasks in a specific sprint.
+
+```
+@VibezBot plan bot: done task <task_id>
+```
+Mark a specific task as done.
+
+```
+@VibezBot plan bot: done sprint <sprint_id>
+```
+Mark a sprint as completed.
+
+### Work
+
+```
+@VibezBot work bot
+```
+Pick up the next pending task and work through it with Claude Code. Continues until all tasks are done or one fails.
+
+### Standup
+
+```
+@VibezBot standup bot
+```
+Show all tasks across all sprints grouped by sprint, with done/total counts.
 
 ## Configuration
 
@@ -129,13 +202,15 @@ You can also check deploy logs anytime:
 | `ANTHROPIC_API_KEY` | No | | Anthropic API key for Claude Code |
 | `CLAUDE_CREDENTIALS` | No | | Base64-encoded Claude Code credentials from macOS keychain |
 | `CLAUDE_MODEL` | No | `sonnet` | Claude model to use (e.g. `sonnet`, `opus`, `haiku`) |
-| `GIT_BRANCH` | No | `master` | Branch to commit and push to |
+| `GIT_BRANCH` | No | `main` | Branch to commit and push to for the project |
 | `GIT_USER_NAME` | No | `Vibez Bot` | Git commit author name |
 | `GIT_USER_EMAIL` | No | `vibez@bot` | Git commit author email |
 | `DISCORD_CHANNEL_IDS` | No | | Comma-separated channel IDs to restrict the bot to |
 | `MAX_BUDGET_PER_REQUEST` | No | `5` | Max USD per Claude invocation |
 | `MAX_QUEUE_SIZE` | No | `10` | Max queued requests |
 | `CLAUDE_TIMEOUT_MS` | No | `600000` | Timeout per request in ms (10 min) |
+| `BOT_REPO_URL` | No | | HTTPS clone URL for the bot's own repo — enables `fix bot` command |
+| `BOT_GIT_BRANCH` | No | `master` | Branch for the bot repo |
 | `DEPLOY_RAILWAY_TOKEN` | No | | Railway API token — enables deploy status checking |
 | `DEPLOY_RAILWAY_SERVICE` | No | | Target project's Railway service ID |
 | `DEPLOY_RAILWAY_ENVIRONMENT` | No | | Target project's Railway environment ID |
@@ -150,6 +225,10 @@ If you set the Railway env vars, the bot will after each push:
 3. Feed the logs back to Claude to auto-fix
 4. Commit, push, and wait for deploy again
 5. Retry up to `MAX_FIX_ATTEMPTS` times
+
+## Crash Recovery
+
+On startup, the bot checks the database for any prompts that were mid-flight or queued when it last shut down, and automatically re-queues them. You won't lose work across restarts.
 
 ## Starter Template
 
