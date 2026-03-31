@@ -8,6 +8,7 @@ import discord
 
 from bot import config
 from bot import db
+from bot import plan_manager
 from bot import railway
 from bot.claude_runner import run_claude
 from bot.formatting import format_error, format_result, truncate
@@ -291,6 +292,86 @@ async def _run_prompt(
             pass
 
 
+async def handle_plan_command(message: discord.Message, thread: discord.Thread, instruction: str):
+    """Handle all 'plan bot:' sub-commands."""
+    # Strip the prefix  ("plan bot" or "plan bot:")
+    body = instruction[len("plan bot"):].lstrip(":").strip()
+
+    # list
+    if body.lower() == "list":
+        sprints = await db.get_sprints()
+        await thread.send(plan_manager.format_sprint_list(sprints))
+        return
+
+    # show <id>
+    if body.lower().startswith("show "):
+        try:
+            sprint_id = int(body.split()[1])
+        except (IndexError, ValueError):
+            await thread.send("Usage: `plan bot: show <sprint_id>`")
+            return
+        sprint = await db.get_sprint(sprint_id)
+        if not sprint:
+            await thread.send(f"Sprint #{sprint_id} not found.")
+            return
+        tasks = await db.get_tasks(sprint_id)
+        await thread.send(plan_manager.format_sprint(sprint, tasks))
+        return
+
+    # done task <id>
+    if body.lower().startswith("done task "):
+        try:
+            task_id = int(body.split()[2])
+        except (IndexError, ValueError):
+            await thread.send("Usage: `plan bot: done task <task_id>`")
+            return
+        ok = await db.mark_task_done(task_id)
+        await thread.send(f"Task #{task_id} marked done." if ok else f"Task #{task_id} not found.")
+        return
+
+    # done sprint <id>
+    if body.lower().startswith("done sprint "):
+        try:
+            sprint_id = int(body.split()[2])
+        except (IndexError, ValueError):
+            await thread.send("Usage: `plan bot: done sprint <sprint_id>`")
+            return
+        ok = await db.mark_sprint_done(sprint_id)
+        await thread.send(f"Sprint #{sprint_id} marked completed." if ok else f"Sprint #{sprint_id} not found.")
+        return
+
+    # No sub-command — treat body as a high-level task to decompose
+    if not body:
+        await thread.send(
+            "Give me a task to break down!\n"
+            "Usage: `plan bot: <high-level task>`\n\n"
+            "Other commands:\n"
+            "• `plan bot: list` — list all sprints\n"
+            "• `plan bot: show <id>` — show sprint tasks\n"
+            "• `plan bot: done task <id>` — mark a task done\n"
+            "• `plan bot: done sprint <id>` — mark a sprint completed"
+        )
+        return
+
+    await thread.send("Breaking it down into a sprint...")
+    try:
+        sprint_id, plan = await plan_manager.create_sprint_from_task(body)
+    except RuntimeError as e:
+        await thread.send(f"Error: {e}")
+        return
+    except Exception as e:
+        await thread.send(f"Failed to decompose task: {e}")
+        return
+
+    if sprint_id is None:
+        await thread.send("Database is not available — cannot persist sprint.")
+        return
+
+    sprint = await db.get_sprint(sprint_id)
+    tasks = await db.get_tasks(sprint_id)
+    await thread.send(plan_manager.format_sprint(sprint, tasks))
+
+
 @client.event
 async def on_message(message: discord.Message):
     print(f"[msg] author={message.author} bot={message.author.bot} channel={message.channel} type={message.channel.type}", flush=True)
@@ -357,6 +438,11 @@ async def on_message(message: discord.Message):
     # Manual log check
     if instruction.lower() in ("logs", "check logs", "show logs", "get logs"):
         await handle_logs(thread)
+        return
+
+    # Detect "plan bot" prefix
+    if instruction.lower().startswith("plan bot"):
+        await handle_plan_command(message, thread, instruction)
         return
 
     # Detect "fix bot" prefix

@@ -29,6 +29,29 @@ async def init_db():
             )
         """)
     print("[db] initialized prompt_queue table", flush=True)
+    async with _pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS sprints (
+                id SERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id SERIAL PRIMARY KEY,
+                sprint_id INTEGER NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'todo',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+    print("[db] initialized sprints and tasks tables", flush=True)
 
 
 def is_enabled() -> bool:
@@ -160,3 +183,94 @@ async def cancel_last_pending() -> dict | None:
     except Exception as e:
         print(f"[db] cancel_last_pending error: {e}", flush=True)
         return None
+
+
+# ── Sprint / Task management ──────────────────────────────────────────────────
+
+async def create_sprint(title: str, description: str) -> int | None:
+    if not _pool:
+        return None
+    try:
+        row = await _pool.fetchrow(
+            "INSERT INTO sprints (title, description) VALUES ($1, $2) RETURNING id",
+            title, description,
+        )
+        return row["id"] if row else None
+    except Exception as e:
+        print(f"[db] create_sprint error: {e}", flush=True)
+        return None
+
+
+async def create_task(sprint_id: int, title: str, description: str) -> int | None:
+    if not _pool:
+        return None
+    try:
+        row = await _pool.fetchrow(
+            "INSERT INTO tasks (sprint_id, title, description) VALUES ($1, $2, $3) RETURNING id",
+            sprint_id, title, description,
+        )
+        return row["id"] if row else None
+    except Exception as e:
+        print(f"[db] create_task error: {e}", flush=True)
+        return None
+
+
+async def get_sprints() -> list[dict]:
+    if not _pool:
+        return []
+    try:
+        rows = await _pool.fetch("SELECT * FROM sprints ORDER BY created_at DESC")
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"[db] get_sprints error: {e}", flush=True)
+        return []
+
+
+async def get_sprint(sprint_id: int) -> dict | None:
+    if not _pool:
+        return None
+    try:
+        row = await _pool.fetchrow("SELECT * FROM sprints WHERE id=$1", sprint_id)
+        return dict(row) if row else None
+    except Exception as e:
+        print(f"[db] get_sprint error: {e}", flush=True)
+        return None
+
+
+async def get_tasks(sprint_id: int) -> list[dict]:
+    if not _pool:
+        return []
+    try:
+        rows = await _pool.fetch(
+            "SELECT * FROM tasks WHERE sprint_id=$1 ORDER BY id ASC", sprint_id
+        )
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"[db] get_tasks error: {e}", flush=True)
+        return []
+
+
+async def mark_task_done(task_id: int) -> bool:
+    if not _pool:
+        return False
+    try:
+        result = await _pool.execute(
+            "UPDATE tasks SET status='done', updated_at=NOW() WHERE id=$1", task_id
+        )
+        return result.split()[-1] == "1"
+    except Exception as e:
+        print(f"[db] mark_task_done error: {e}", flush=True)
+        return False
+
+
+async def mark_sprint_done(sprint_id: int) -> bool:
+    if not _pool:
+        return False
+    try:
+        result = await _pool.execute(
+            "UPDATE sprints SET status='completed', updated_at=NOW() WHERE id=$1", sprint_id
+        )
+        return result.split()[-1] == "1"
+    except Exception as e:
+        print(f"[db] mark_sprint_done error: {e}", flush=True)
+        return False
