@@ -23,14 +23,7 @@ async def run_claude(
     session_id: Optional[str] = None,
     cwd: Optional[str] = None,
 ) -> ClaudeResult:
-    env = {
-        "HOME": os.environ.get("HOME", ""),
-        "PATH": os.environ.get("PATH", ""),
-    }
-    # Use explicit API key if provided, otherwise Claude CLI uses its own auth (~/.claude/)
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if api_key:
-        env["ANTHROPIC_API_KEY"] = api_key
+    env = os.environ.copy()
 
     args = [
         "claude",
