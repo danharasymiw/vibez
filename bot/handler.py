@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import discord
 
 from bot import config
+from bot import db
 from bot import railway
 from bot.claude_runner import run_claude
 from bot.formatting import format_error, format_result, truncate
@@ -30,6 +31,36 @@ async def on_ready():
     global _ready_at
     _ready_at = datetime.now(timezone.utc)
     print(f"Logged in as {client.user}", flush=True)
+    asyncio.create_task(_replay_pending_prompts())
+
+
+async def _replay_pending_prompts():
+    """On startup, re-queue any prompts that were pending or mid-processing when the bot last died."""
+    pending = await db.get_pending_prompts()
+    if not pending:
+        return
+    print(f"[startup] Replaying {len(pending)} pending prompt(s)", flush=True)
+    for row in pending:
+        try:
+            channel = client.get_channel(int(row["channel_id"])) or await client.fetch_channel(int(row["channel_id"]))
+            message = await channel.fetch_message(int(row["discord_message_id"]))
+
+            # Reuse existing thread if one was already created, otherwise create a new one
+            thread: discord.Thread
+            if row["thread_id"]:
+                thread = client.get_channel(int(row["thread_id"])) or await client.fetch_channel(int(row["thread_id"]))
+            elif isinstance(message.channel, discord.Thread):
+                thread = message.channel
+            else:
+                thread_name = row["instruction"][:97] + "..." if len(row["instruction"]) > 100 else row["instruction"]
+                thread = await message.create_thread(name=thread_name)
+                await db.set_thread_id(row["id"], str(thread.id))
+
+            await thread.send("Resuming after restart...")
+            await _run_prompt(message, thread, row["instruction"], row["is_bot_fix"], row["id"])
+        except Exception as e:
+            print(f"[startup] Failed to replay prompt id={row['id']}: {e}", flush=True)
+            await db.mark_failed(row["id"], str(e))
 
 
 async def handle_logs(thread: discord.Thread):
@@ -103,65 +134,20 @@ async def deploy_and_fix_loop(thread: discord.Thread, instruction: str, author_n
     await thread.send(f"**Deploy:** still failing after {config.MAX_FIX_ATTEMPTS} fix attempts. 😵")
 
 
-@client.event
-async def on_message(message: discord.Message):
-    print(f"[msg] author={message.author} bot={message.author.bot} channel={message.channel} type={message.channel.type}", flush=True)
-
-    if message.author.bot:
-        print(f"[skip] bot message", flush=True)
-        return
-    if _ready_at and message.created_at < _ready_at:
-        print(f"[skip] old message from before ready", flush=True)
-        return
-    if not client.user or client.user not in message.mentions:
-        print(f"[skip] not mentioned (mentions={[u.name for u in message.mentions]})", flush=True)
-        return
-
-    # If the message is in a thread, use that thread. Otherwise create one.
-    is_thread = isinstance(message.channel, discord.Thread)
-
-    if not is_thread:
-        if config.CHANNEL_IDS and str(message.channel.id) not in config.CHANNEL_IDS:
-            print(f"[skip] channel {message.channel.id} not in allowed list {config.CHANNEL_IDS}", flush=True)
-            return
-
-    instruction = re.sub(rf"<@!?{client.user.id}>", "", message.content).strip()
-    print(f"[instruction] '{instruction}' from {message.author} in {'thread' if is_thread else 'channel'}", flush=True)
-
-    await message.add_reaction("👀")
-
-    if not instruction:
-        await message.add_reaction("❓")
-        await message.reply("Give me something to work with! Mention me with coding instructions.")
-        return
-
-    if is_thread:
-        thread = message.channel
-    else:
-        thread_name = instruction[:97] + "..." if len(instruction) > 100 else instruction
-        thread = await message.create_thread(name=thread_name)
-
-    # Manual log check
-    if instruction.lower() in ("logs", "check logs", "show logs", "get logs"):
-        await handle_logs(thread)
-        return
-
-    # Detect "fix bot" prefix
-    is_bot_fix = False
-    if instruction.lower().startswith("fix bot"):
-        if not config.BOT_REPO_URL:
-            await thread.send("BOT_REPO_URL is not configured.")
-            return
-        is_bot_fix = True
-        instruction = instruction[7:].lstrip(":").strip()
-        if not instruction:
-            await thread.send("What should I fix? e.g. `fix bot: the heartbeat isn't updating`")
-            return
-
+async def _run_prompt(
+    message: discord.Message,
+    thread: discord.Thread,
+    instruction: str,
+    is_bot_fix: bool,
+    prompt_id: int | None,
+):
+    """Queue and execute a prompt, tracking status in the DB."""
     target_dir = config.BOT_DIR if is_bot_fix else config.PROJECT_DIR
 
     if queue.pending >= config.MAX_QUEUE_SIZE:
         await thread.send("Queue is full — try again in a bit.")
+        if prompt_id is not None:
+            await db.mark_failed(prompt_id, "queue full")
         return
 
     position = queue.pending
@@ -169,6 +155,9 @@ async def on_message(message: discord.Message):
         await thread.send(f"Queued — #{position + 1} in line.")
 
     async def process():
+        if prompt_id is not None:
+            await db.mark_processing(prompt_id)
+
         cooking = random.choice(["🍳", "🔥", "🧑‍🍳", "⚡", "🧪", "🪄", "🤖", "💅", "🫡"])
         await message.add_reaction(cooking)
         label = "bot" if is_bot_fix else "project"
@@ -228,6 +217,8 @@ async def on_message(message: discord.Message):
                 commit_hash="",
                 pushed=False,
             ))
+            if prompt_id is not None:
+                await db.mark_done(prompt_id)
             return
 
         # Snapshot current deployment before push so we can detect the new one
@@ -249,6 +240,8 @@ async def on_message(message: discord.Message):
         if not git_result.committed:
             await message.add_reaction("🤷")
             await thread.send(f"**No changes** — Claude finished but didn't modify any files.\n\n{truncate(result.result, 1500)}")
+            if prompt_id is not None:
+                await db.mark_done(prompt_id)
             return
 
         await message.add_reaction("✅")
@@ -264,6 +257,9 @@ async def on_message(message: discord.Message):
             )
         )
 
+        if prompt_id is not None:
+            await db.mark_done(prompt_id)
+
         if git_result.pushed:
             await thread.send("Pushed — waiting for deploy...")
             if is_bot_fix:
@@ -277,8 +273,85 @@ async def on_message(message: discord.Message):
         await queue.run(process)
     except Exception as e:
         print(f"[error] {e}", flush=True)
+        if prompt_id is not None:
+            await db.mark_failed(prompt_id, str(e))
         try:
             await message.add_reaction("💥")
             await thread.send(format_error(str(e)))
         except Exception:
             pass
+
+
+@client.event
+async def on_message(message: discord.Message):
+    print(f"[msg] author={message.author} bot={message.author.bot} channel={message.channel} type={message.channel.type}", flush=True)
+
+    if message.author.bot:
+        print(f"[skip] bot message", flush=True)
+        return
+    if _ready_at and message.created_at < _ready_at:
+        print(f"[skip] old message from before ready", flush=True)
+        return
+    if not client.user or client.user not in message.mentions:
+        print(f"[skip] not mentioned (mentions={[u.name for u in message.mentions]})", flush=True)
+        return
+
+    # If the message is in a thread, use that thread. Otherwise create one.
+    is_thread = isinstance(message.channel, discord.Thread)
+
+    if not is_thread:
+        if config.CHANNEL_IDS and str(message.channel.id) not in config.CHANNEL_IDS:
+            print(f"[skip] channel {message.channel.id} not in allowed list {config.CHANNEL_IDS}", flush=True)
+            return
+
+    instruction = re.sub(rf"<@!?{client.user.id}>", "", message.content).strip()
+    print(f"[instruction] '{instruction}' from {message.author} in {'thread' if is_thread else 'channel'}", flush=True)
+
+    await message.add_reaction("👀")
+
+    if not instruction:
+        await message.add_reaction("❓")
+        await message.reply("Give me something to work with! Mention me with coding instructions.")
+        return
+
+    # Clear queue command
+    if instruction.lower() == "clear":
+        count = await db.clear_queue()
+        await message.reply(f"Cleared {count} pending prompt(s) from the queue.")
+        return
+
+    if is_thread:
+        thread = message.channel
+    else:
+        thread_name = instruction[:97] + "..." if len(instruction) > 100 else instruction
+        thread = await message.create_thread(name=thread_name)
+
+    # Manual log check
+    if instruction.lower() in ("logs", "check logs", "show logs", "get logs"):
+        await handle_logs(thread)
+        return
+
+    # Detect "fix bot" prefix
+    is_bot_fix = False
+    if instruction.lower().startswith("fix bot"):
+        if not config.BOT_REPO_URL:
+            await thread.send("BOT_REPO_URL is not configured.")
+            return
+        is_bot_fix = True
+        instruction = instruction[7:].lstrip(":").strip()
+        if not instruction:
+            await thread.send("What should I fix? e.g. `fix bot: the heartbeat isn't updating`")
+            return
+
+    # Persist to DB queue
+    prompt_id = await db.add_prompt(
+        str(message.id),
+        str(message.channel.id),
+        message.author.display_name,
+        instruction,
+        is_bot_fix,
+    )
+    if prompt_id is not None:
+        await db.set_thread_id(prompt_id, str(thread.id))
+
+    await _run_prompt(message, thread, instruction, is_bot_fix, prompt_id)
