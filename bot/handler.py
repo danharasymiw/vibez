@@ -299,32 +299,40 @@ async def _run_prompt(
 
 
 async def handle_work_command(thread: discord.Thread):
-    """Spawn up to 3 Claude subprocesses to work on pending tasks concurrently."""
+    """Work on pending tasks one at a time until none remain."""
     tasks = await db.get_todo_tasks(limit=1)
     if not tasks:
         await thread.send("No pending tasks. Use `plan bot: <task>` to create tasks.")
         return
 
-    task = tasks[0]
-    task_id = task["id"]
-    await thread.send(f"Working on task #{task_id}: {task['title']}...")
+    while tasks:
+        task = tasks[0]
+        task_id = task["id"]
+        await thread.send(f"Working on task #{task_id}: {task['title']}...")
 
-    await db.mark_task_in_progress(task_id)
-    instruction = f"Task #{task_id}: {task['title']}\n\n{task['description']}"
-    print(f"[work] starting task #{task_id}: {task['title']}", flush=True)
-    try:
-        result = await run_claude(instruction, cwd=config.PROJECT_DIR)
-        if result.success:
-            await db.mark_task_done(task_id)
-            git_result = await commit_and_push(
-                f"vibez: task #{task_id}: {task['title'][:60]}"
-            )
-            files = f" ({len(git_result.files_changed)} file(s) changed)" if git_result.committed else " (no changes)"
-            await thread.send(f"**Task #{task_id}** \u2705 {task['title']}{files}\n{truncate(result.result, 400)}")
-        else:
-            await thread.send(f"**Task #{task_id}** \u274c {task['title']}\n{truncate(result.result, 300)}")
-    except Exception as e:
-        await thread.send(f"**Task #{task_id}** \U0001f4a5 {task['title']}\n{str(e)[:200]}")
+        await db.mark_task_in_progress(task_id)
+        instruction = f"Task #{task_id}: {task['title']}\n\n{task['description']}"
+        print(f"[work] starting task #{task_id}: {task['title']}", flush=True)
+        try:
+            result = await run_claude(instruction, cwd=config.PROJECT_DIR)
+            if result.success:
+                await db.mark_task_done(task_id)
+                git_result = await commit_and_push(
+                    f"vibez: task #{task_id}: {task['title'][:60]}"
+                )
+                files = f" ({len(git_result.files_changed)} file(s) changed)" if git_result.committed else " (no changes)"
+                await thread.send(f"**Task #{task_id}** \u2705 {task['title']}{files}\n{truncate(result.result, 400)}")
+            else:
+                await thread.send(f"**Task #{task_id}** \u274c {task['title']}\n{truncate(result.result, 300)}")
+                break
+        except Exception as e:
+            await thread.send(f"**Task #{task_id}** \U0001f4a5 {task['title']}\n{str(e)[:200]}")
+            break
+
+        tasks = await db.get_todo_tasks(limit=1)
+
+    else:
+        await thread.send("All tasks done! 🎉")
 
 
 async def handle_standup_command(thread: discord.Thread):
