@@ -19,6 +19,9 @@ queue = TaskQueue()
 # Maps Discord thread ID -> Claude session ID for conversation continuity
 thread_sessions: dict[int, str] = {}
 
+# Prompt IDs that have been cancelled and should be skipped when they reach the front of the queue
+_cancelled_ids: set[int] = set()
+
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
@@ -155,6 +158,11 @@ async def _run_prompt(
         await thread.send(f"Queued — #{position + 1} in line.")
 
     async def process():
+        if prompt_id is not None and prompt_id in _cancelled_ids:
+            _cancelled_ids.discard(prompt_id)
+            await thread.send("Cancelled.")
+            return
+
         if prompt_id is not None:
             await db.mark_processing(prompt_id)
 
@@ -318,6 +326,17 @@ async def on_message(message: discord.Message):
     if instruction.lower() == "clear":
         count = await db.clear_queue()
         await message.reply(f"Cleared {count} pending prompt(s) from the queue.")
+        return
+
+    # Cancel last queued request
+    if instruction.lower() == "cancel":
+        cancelled = await db.cancel_last_pending()
+        if cancelled:
+            _cancelled_ids.add(cancelled["id"])
+            short = cancelled["instruction"][:80]
+            await message.reply(f"Cancelled: *{short}*")
+        else:
+            await message.reply("Nothing pending to cancel.")
         return
 
     if is_thread:

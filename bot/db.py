@@ -140,3 +140,23 @@ async def clear_queue() -> int:
     except Exception as e:
         print(f"[db] clear_queue error: {e}", flush=True)
         return 0
+
+
+async def cancel_last_pending() -> dict | None:
+    """Cancel the most recently added pending prompt. Returns the cancelled row or None."""
+    if not _pool:
+        return None
+    try:
+        row = await _pool.fetchrow(
+            """
+            UPDATE prompt_queue SET status='cancelled', updated_at=NOW()
+            WHERE id = (
+                SELECT id FROM prompt_queue WHERE status='pending' ORDER BY created_at DESC LIMIT 1
+            )
+            RETURNING *
+            """
+        )
+        return dict(row) if row else None
+    except Exception as e:
+        print(f"[db] cancel_last_pending error: {e}", flush=True)
+        return None
