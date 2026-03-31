@@ -2,6 +2,7 @@ import asyncio
 import random
 import re
 import time
+from datetime import datetime, timezone
 
 import discord
 
@@ -21,9 +22,13 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
+_ready_at: datetime | None = None
+
 
 @client.event
 async def on_ready():
+    global _ready_at
+    _ready_at = datetime.now(timezone.utc)
     print(f"Logged in as {client.user}", flush=True)
 
 
@@ -104,6 +109,9 @@ async def on_message(message: discord.Message):
 
     if message.author.bot:
         print(f"[skip] bot message", flush=True)
+        return
+    if _ready_at and message.created_at < _ready_at:
+        print(f"[skip] old message from before ready", flush=True)
         return
     if not client.user or client.user not in message.mentions:
         print(f"[skip] not mentioned (mentions={[u.name for u in message.mentions]})", flush=True)
@@ -206,7 +214,7 @@ async def on_message(message: discord.Message):
             heartbeat_task.cancel()
         print(f"[claude] finished success={result.success} cost=${result.cost_usd:.4f} duration={result.duration_ms:.0f}ms session={result.session_id}", flush=True)
 
-        if result.session_id:
+        if result.session_id and result.success:
             thread_sessions[thread.id] = result.session_id
 
         if not result.success:
