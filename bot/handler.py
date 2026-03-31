@@ -143,6 +143,7 @@ async def _run_prompt(
     instruction: str,
     is_bot_fix: bool,
     prompt_id: int | None,
+    model: str | None = None,
 ):
     """Queue and execute a prompt, tracking status in the DB."""
     target_dir = config.BOT_DIR if is_bot_fix else config.PROJECT_DIR
@@ -205,7 +206,7 @@ async def _run_prompt(
         print(f"[claude] starting for thread {thread.id} target={label}", flush=True)
         session_id = thread_sessions.get(thread.id)
         try:
-            result = await run_claude(instruction, on_progress, session_id=session_id, cwd=target_dir)
+            result = await run_claude(instruction, on_progress, session_id=session_id, cwd=target_dir, model=model)
         finally:
             heartbeat_running = False
             heartbeat_task.cancel()
@@ -313,7 +314,15 @@ async def on_message(message: discord.Message):
             return
 
     instruction = re.sub(rf"<@!?{client.user.id}>", "", message.content).strip()
-    print(f"[instruction] '{instruction}' from {message.author} in {'thread' if is_thread else 'channel'}", flush=True)
+
+    # Parse optional --model <name> flag
+    model: str | None = None
+    model_match = re.search(r"--model\s+(\S+)", instruction, re.IGNORECASE)
+    if model_match:
+        model = model_match.group(1)
+        instruction = (instruction[: model_match.start()] + instruction[model_match.end() :]).strip()
+
+    print(f"[instruction] '{instruction}' model={model or 'default'} from {message.author} in {'thread' if is_thread else 'channel'}", flush=True)
 
     await message.add_reaction("👀")
 
@@ -373,4 +382,4 @@ async def on_message(message: discord.Message):
     if prompt_id is not None:
         await db.set_thread_id(prompt_id, str(thread.id))
 
-    await _run_prompt(message, thread, instruction, is_bot_fix, prompt_id)
+    await _run_prompt(message, thread, instruction, is_bot_fix, prompt_id, model)

@@ -22,6 +22,7 @@ async def run_claude(
     on_progress: Optional[Callable[[str], Awaitable[None]]] = None,
     session_id: Optional[str] = None,
     cwd: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> ClaudeResult:
     env = os.environ.copy()
 
@@ -34,7 +35,7 @@ async def run_claude(
         "--verbose",
         "--dangerously-skip-permissions",
         "--model",
-        config.CLAUDE_MODEL,
+        model or config.CLAUDE_MODEL,
         "--max-turns",
         "50",
     ]
