@@ -84,15 +84,23 @@ async def run_claude(
         proc.kill()
         raise RuntimeError("Claude Code timed out")
 
+    stderr = (await proc.stderr.read()).decode() if proc.stderr else ""
+    if stderr:
+        print(f"[claude stderr] {stderr[:500]}", flush=True)
+
     # Parse result from the last stream-json event
     for line in reversed(stdout_lines):
         try:
             event = json.loads(line)
             if event.get("type") == "result":
+                result_text = event.get("result", "")
+                is_success = not event.get("is_error") and event.get("subtype") == "success"
+                # If Claude failed with no result text, include stderr so the error is visible
+                if not is_success and not result_text and stderr:
+                    result_text = stderr[:500]
                 return ClaudeResult(
-                    success=not event.get("is_error")
-                    and event.get("subtype") == "success",
-                    result=event.get("result", ""),
+                    success=is_success,
+                    result=result_text,
                     cost_usd=event.get("total_cost_usd", 0),
                     duration_ms=event.get("duration_ms", 0),
                     num_turns=event.get("num_turns", 0),
@@ -116,7 +124,6 @@ async def run_claude(
     if proc.returncode == 0:
         return ClaudeResult(True, stdout_text[-500:], 0, 0, 0, found_session_id)
 
-    stderr = await proc.stderr.read() if proc.stderr else b""
     raise RuntimeError(
-        f"Claude exited with code {proc.returncode}: {stderr.decode()[-500:]}"
+        f"Claude exited with code {proc.returncode}: {stderr[-500:]}"
     )
