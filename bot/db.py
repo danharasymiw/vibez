@@ -263,6 +263,25 @@ async def mark_task_done(task_id: int) -> bool:
         return False
 
 
+async def get_all_tasks() -> list[dict]:
+    """Return all tasks across all sprints, joined with sprint title."""
+    if not _pool:
+        return []
+    try:
+        rows = await _pool.fetch(
+            """
+            SELECT t.*, s.title AS sprint_title, s.status AS sprint_status
+            FROM tasks t
+            JOIN sprints s ON s.id = t.sprint_id
+            ORDER BY s.created_at DESC, t.id ASC
+            """
+        )
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"[db] get_all_tasks error: {e}", flush=True)
+        return []
+
+
 async def mark_sprint_done(sprint_id: int) -> bool:
     if not _pool:
         return False

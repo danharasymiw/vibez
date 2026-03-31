@@ -292,6 +292,31 @@ async def _run_prompt(
             pass
 
 
+async def handle_standup_command(thread: discord.Thread):
+    """List all tasks from all sprints."""
+    tasks = await db.get_all_tasks()
+    if not tasks:
+        await thread.send("No tasks found. Use `plan bot: <task>` to create a sprint.")
+        return
+
+    # Group by sprint
+    sprints: dict[str, list[dict]] = {}
+    for t in tasks:
+        key = t["sprint_title"]
+        sprints.setdefault(key, []).append(t)
+
+    lines = ["**Standup**\n"]
+    for sprint_title, sprint_tasks in sprints.items():
+        done = sum(1 for t in sprint_tasks if t["status"] == "done")
+        lines.append(f"**{sprint_title}** ({done}/{len(sprint_tasks)} done)")
+        for t in sprint_tasks:
+            icon = "✅" if t["status"] == "done" else "⬜"
+            lines.append(f"  {icon} #{t['id']} {t['title']}")
+        lines.append("")
+
+    await thread.send(truncate("\n".join(lines).strip()))
+
+
 async def handle_plan_command(message: discord.Message, thread: discord.Thread, instruction: str):
     """Handle all 'plan bot:' sub-commands."""
     # Strip the prefix  ("plan bot" or "plan bot:")
@@ -438,6 +463,11 @@ async def on_message(message: discord.Message):
     # Manual log check
     if instruction.lower() in ("logs", "check logs", "show logs", "get logs"):
         await handle_logs(thread)
+        return
+
+    # Detect "standup bot" prefix
+    if instruction.lower().startswith("standup bot"):
+        await handle_standup_command(thread)
         return
 
     # Detect "plan bot" prefix
