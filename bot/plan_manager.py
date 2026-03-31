@@ -3,24 +3,10 @@ Plan manager: uses Claude to decompose a high-level task into a sprint + discret
 then persists everything to the DB.
 """
 
+import asyncio
 import json
-import os
 
-import anthropic
-
-from bot import db
-
-_client: anthropic.AsyncAnthropic | None = None
-
-
-def _get_client() -> anthropic.AsyncAnthropic:
-    global _client
-    if _client is None:
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY is not set")
-        _client = anthropic.AsyncAnthropic(api_key=api_key)
-    return _client
+from bot import config, db
 
 
 async def decompose(high_level_task: str) -> dict:
@@ -33,7 +19,6 @@ async def decompose(high_level_task: str) -> dict:
             "tasks": [{"title": str, "description": str}, ...]
         }
     """
-    client = _get_client()
     prompt = f"""You are a technical project manager. Break the following high-level task into a sprint.
 
 High-level task: {high_level_task}
@@ -54,13 +39,41 @@ Rules:
 - Tasks ordered logically (dependencies first)
 - Titles under 60 characters"""
 
-    message = await client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
+    proc = await asyncio.create_subprocess_exec(
+        "claude",
+        "-p",
+        prompt,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--dangerously-skip-permissions",
+        "--model",
+        config.CLAUDE_MODEL,
+        "--max-turns",
+        "1",
+        cwd=config.PROJECT_DIR,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
 
-    text = message.content[0].text.strip()
+    stdout_lines: list[str] = []
+    async for line_bytes in proc.stdout:
+        stdout_lines.append(line_bytes.decode())
+    await proc.wait()
+
+    # Extract result text from the stream-json result event
+    for line in reversed(stdout_lines):
+        try:
+            event = json.loads(line)
+            if event.get("type") == "result" and event.get("subtype") == "success":
+                text = event.get("result", "").strip()
+                break
+        except json.JSONDecodeError:
+            pass
+    else:
+        stderr = (await proc.stderr.read()).decode() if proc.stderr else ""
+        raise RuntimeError(f"Claude plan decomposition failed: {stderr[:500]}")
+
     # Strip markdown code fences if present
     if text.startswith("```"):
         text = text.split("```")[1]
