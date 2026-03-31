@@ -17,7 +17,9 @@ from bot.task_queue import TaskQueue
 
 queue = TaskQueue()
 
-# Maps Discord thread ID -> Claude session ID for conversation continuity
+# Maps Discord thread ID -> Claude session ID for conversation continuity.
+# Capped at _MAX_THREAD_SESSIONS to prevent unbounded growth.
+_MAX_THREAD_SESSIONS = 500
 thread_sessions: dict[int, str] = {}
 
 # Prompt IDs that have been cancelled and should be skipped when they reach the front of the queue
@@ -214,6 +216,10 @@ async def _run_prompt(
         print(f"[claude] finished success={result.success} cost=${result.cost_usd:.4f} duration={result.duration_ms:.0f}ms session={result.session_id}", flush=True)
 
         if result.session_id and result.success:
+            if len(thread_sessions) >= _MAX_THREAD_SESSIONS:
+                # Evict the oldest entry to keep memory bounded
+                oldest = next(iter(thread_sessions))
+                del thread_sessions[oldest]
             thread_sessions[thread.id] = result.session_id
 
         if not result.success:

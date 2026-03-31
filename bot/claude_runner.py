@@ -76,6 +76,7 @@ async def run_claude(
             await proc.wait()
     except TimeoutError:
         proc.kill()
+        await proc.wait()
         raise RuntimeError("Claude Code timed out")
 
     stderr = (await proc.stderr.read()).decode() if proc.stderr else ""

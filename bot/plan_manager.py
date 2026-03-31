@@ -74,14 +74,28 @@ Rules:
         stderr = (await proc.stderr.read()).decode() if proc.stderr else ""
         raise RuntimeError(f"Claude plan decomposition failed: {stderr[:500]}")
 
-    # Strip markdown code fences if present
+    # Strip markdown code fences if present (handles ```json, ``` json, plain ```)
     if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
+        # Remove opening fence line, then closing fence
+        lines = text.splitlines()
+        # Drop first line (the fence, e.g. "```json") and any trailing closing fence
+        inner = lines[1:]
+        if inner and inner[-1].strip() == "```":
+            inner = inner[:-1]
+        text = "\n".join(inner).strip()
 
-    return json.loads(text)
+    plan = json.loads(text)
+
+    # Validate required schema keys
+    required_keys = {"sprint_title", "sprint_description", "tasks"}
+    missing = required_keys - plan.keys()
+    if missing:
+        raise RuntimeError(f"Claude returned invalid plan structure, missing keys: {missing}")
+
+    if not isinstance(plan["tasks"], list) or not plan["tasks"]:
+        raise RuntimeError("Claude returned a plan with no tasks")
+
+    return plan
 
 
 async def create_sprint_from_task(high_level_task: str) -> tuple[int | None, dict]:

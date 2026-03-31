@@ -1,3 +1,4 @@
+import atexit
 import asyncio
 import os
 import stat
@@ -51,7 +52,17 @@ def _setup_credential_helper() -> str:
     os.chmod(path, stat.S_IRUSR | stat.S_IXUSR)
 
     _credential_helper_path = path
+    atexit.register(_cleanup_credential_helper)
     return path
+
+
+def _cleanup_credential_helper() -> None:
+    """Remove the credential helper temp file on process exit."""
+    if _credential_helper_path and os.path.exists(_credential_helper_path):
+        try:
+            os.unlink(_credential_helper_path)
+        except OSError:
+            pass
 
 
 async def _run_git(*args: str, cwd: str | None = None, with_auth: bool = False) -> str:
@@ -130,7 +141,8 @@ async def commit_and_push(message: str, cwd: str | None = None) -> GitResult:
     if not status.strip():
         return GitResult()
 
-    files_changed = [line.strip() for line in status.strip().split("\n") if line.strip()]
+    # Strip the two-character git status prefix (e.g. "M  " or "?? ") to get clean paths
+    files_changed = [line[3:].strip() for line in status.strip().split("\n") if line.strip()]
 
     await _run_git("add", "-A", cwd=target)
     await _run_git("commit", "-m", message, cwd=target)
