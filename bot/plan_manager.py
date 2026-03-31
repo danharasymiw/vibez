@@ -54,12 +54,17 @@ Rules:
         cwd=config.PROJECT_DIR,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        limit=1024 * 1024,  # 1MB line buffer — default 64KB is too small for stream-json
     )
+
+    # Drain stderr concurrently so it never blocks the subprocess
+    stderr_task = asyncio.create_task(proc.stderr.read())
 
     stdout_lines: list[str] = []
     async for line_bytes in proc.stdout:
         stdout_lines.append(line_bytes.decode())
     await proc.wait()
+    stderr_bytes = await stderr_task
 
     # Extract result text from the stream-json result event
     for line in reversed(stdout_lines):
@@ -71,7 +76,7 @@ Rules:
         except json.JSONDecodeError:
             pass
     else:
-        stderr = (await proc.stderr.read()).decode() if proc.stderr else ""
+        stderr = stderr_bytes.decode()
         raise RuntimeError(f"Claude plan decomposition failed: {stderr[:500]}")
 
     # Strip markdown code fences if present (handles ```json, ``` json, plain ```)

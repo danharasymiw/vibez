@@ -281,6 +281,20 @@ async def mark_task_done(task_id: int) -> bool:
         return False
 
 
+async def reset_in_progress_tasks() -> int:
+    """Reset tasks stuck in 'in_progress' back to 'todo' (e.g. after a crash). Returns count reset."""
+    if not _pool:
+        return 0
+    try:
+        result = await _pool.execute(
+            "UPDATE tasks SET status='todo', updated_at=NOW() WHERE status='in_progress'"
+        )
+        return int(result.split()[-1])
+    except Exception as e:
+        print(f"[db] reset_in_progress_tasks error: {e}", flush=True)
+        return 0
+
+
 async def get_todo_tasks(limit: int = 3) -> list[dict]:
     """Return up to `limit` tasks with status='todo', oldest first."""
     if not _pool:

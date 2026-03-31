@@ -42,6 +42,10 @@ async def on_ready():
 
 async def _replay_pending_prompts():
     """On startup, re-queue any prompts that were pending or mid-processing when the bot last died."""
+    reset = await db.reset_in_progress_tasks()
+    if reset:
+        print(f"[startup] Reset {reset} stuck in_progress task(s) back to todo", flush=True)
+
     pending = await db.get_pending_prompts()
     if not pending:
         return
@@ -314,7 +318,7 @@ async def handle_work_command(thread: discord.Thread):
         instruction = f"Task #{task_id}: {task['title']}\n\n{task['description']}"
         print(f"[work] starting task #{task_id}: {task['title']}", flush=True)
         try:
-            result = await run_claude(instruction, cwd=config.PROJECT_DIR)
+            result = await queue.run(lambda: run_claude(instruction, cwd=config.PROJECT_DIR))
             if result.success:
                 await db.mark_task_done(task_id)
                 git_result = await commit_and_push(
