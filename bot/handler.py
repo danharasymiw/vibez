@@ -292,6 +292,43 @@ async def _run_prompt(
             pass
 
 
+async def handle_work_command(thread: discord.Thread):
+    """Spawn up to 3 Claude subprocesses to work on pending tasks concurrently."""
+    tasks = await db.get_todo_tasks(limit=3)
+    if not tasks:
+        await thread.send("No pending tasks. Use `plan bot: <task>` to create tasks.")
+        return
+
+    names = ", ".join(f"#{t['id']} {t['title']}" for t in tasks)
+    await thread.send(f"Starting work on {len(tasks)} task(s): {names}")
+
+    git_lock = asyncio.Lock()
+
+    async def work_on_task(task: dict) -> str:
+        task_id = task["id"]
+        await db.mark_task_in_progress(task_id)
+        instruction = f"Task #{task_id}: {task['title']}\n\n{task['description']}"
+        print(f"[work] starting task #{task_id}: {task['title']}", flush=True)
+        try:
+            result = await run_claude(instruction, cwd=config.PROJECT_DIR)
+            if result.success:
+                await db.mark_task_done(task_id)
+                async with git_lock:
+                    git_result = await commit_and_push(
+                        f"vibez: task #{task_id}: {task['title'][:60]}"
+                    )
+                files = f" ({len(git_result.files_changed)} file(s) changed)" if git_result.committed else " (no changes)"
+                return f"**Task #{task_id}** \u2705 {task['title']}{files}\n{truncate(result.result, 400)}"
+            else:
+                return f"**Task #{task_id}** \u274c {task['title']}\n{truncate(result.result, 300)}"
+        except Exception as e:
+            return f"**Task #{task_id}** \U0001f4a5 {task['title']}\n{str(e)[:200]}"
+
+    results = await asyncio.gather(*[work_on_task(t) for t in tasks])
+    for msg in results:
+        await thread.send(msg)
+
+
 async def handle_standup_command(thread: discord.Thread):
     """List all tasks from all sprints."""
     tasks = await db.get_all_tasks()
@@ -463,6 +500,11 @@ async def on_message(message: discord.Message):
     # Manual log check
     if instruction.lower() in ("logs", "check logs", "show logs", "get logs"):
         await handle_logs(thread)
+        return
+
+    # Detect "work bot" prefix
+    if instruction.lower().startswith("work bot"):
+        await handle_work_command(thread)
         return
 
     # Detect "standup bot" prefix

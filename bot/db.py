@@ -48,8 +48,12 @@ async def init_db():
                 description TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'todo',
                 created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW()
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                status_changed_at TIMESTAMPTZ DEFAULT NOW()
             )
+        """)
+        await conn.execute("""
+            ALTER TABLE tasks ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ DEFAULT NOW()
         """)
     print("[db] initialized sprints and tasks tables", flush=True)
 
@@ -250,17 +254,53 @@ async def get_tasks(sprint_id: int) -> list[dict]:
         return []
 
 
+async def mark_task_in_progress(task_id: int) -> bool:
+    if not _pool:
+        return False
+    try:
+        result = await _pool.execute(
+            "UPDATE tasks SET status='in_progress', updated_at=NOW(), status_changed_at=NOW() WHERE id=$1",
+            task_id,
+        )
+        return result.split()[-1] == "1"
+    except Exception as e:
+        print(f"[db] mark_task_in_progress error: {e}", flush=True)
+        return False
+
+
 async def mark_task_done(task_id: int) -> bool:
     if not _pool:
         return False
     try:
         result = await _pool.execute(
-            "UPDATE tasks SET status='done', updated_at=NOW() WHERE id=$1", task_id
+            "UPDATE tasks SET status='done', updated_at=NOW(), status_changed_at=NOW() WHERE id=$1", task_id
         )
         return result.split()[-1] == "1"
     except Exception as e:
         print(f"[db] mark_task_done error: {e}", flush=True)
         return False
+
+
+async def get_todo_tasks(limit: int = 3) -> list[dict]:
+    """Return up to `limit` tasks with status='todo', oldest first."""
+    if not _pool:
+        return []
+    try:
+        rows = await _pool.fetch(
+            """
+            SELECT t.*, s.title AS sprint_title
+            FROM tasks t
+            JOIN sprints s ON s.id = t.sprint_id
+            WHERE t.status = 'todo'
+            ORDER BY t.id ASC
+            LIMIT $1
+            """,
+            limit,
+        )
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"[db] get_todo_tasks error: {e}", flush=True)
+        return []
 
 
 async def get_all_tasks() -> list[dict]:
