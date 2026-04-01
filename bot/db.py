@@ -56,6 +56,15 @@ async def init_db():
             ALTER TABLE tasks ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ DEFAULT NOW()
         """)
     print("[db] initialized sprints and tasks tables", flush=True)
+    async with _pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS thread_sessions (
+                thread_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+    print("[db] initialized thread_sessions table", flush=True)
 
 
 def is_enabled() -> bool:
@@ -279,6 +288,36 @@ async def mark_task_done(task_id: int) -> bool:
     except Exception as e:
         print(f"[db] mark_task_done error: {e}", flush=True)
         return False
+
+
+async def load_all_sessions() -> dict[int, str]:
+    """Load all thread_id -> session_id mappings from DB for in-memory seeding."""
+    if not _pool:
+        return {}
+    try:
+        rows = await _pool.fetch("SELECT thread_id, session_id FROM thread_sessions")
+        return {int(r["thread_id"]): r["session_id"] for r in rows}
+    except Exception as e:
+        print(f"[db] load_all_sessions error: {e}", flush=True)
+        return {}
+
+
+async def set_session_id(thread_id: str, session_id: str):
+    """Persist a thread's Claude session ID so it survives restarts."""
+    if not _pool:
+        return
+    try:
+        await _pool.execute(
+            """
+            INSERT INTO thread_sessions (thread_id, session_id, updated_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (thread_id) DO UPDATE SET session_id=$2, updated_at=NOW()
+            """,
+            thread_id,
+            session_id,
+        )
+    except Exception as e:
+        print(f"[db] set_session_id error: {e}", flush=True)
 
 
 async def reset_in_progress_tasks() -> int:

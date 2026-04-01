@@ -37,6 +37,10 @@ async def on_ready():
     global _ready_at
     _ready_at = datetime.now(timezone.utc)
     print(f"Logged in as {client.user}", flush=True)
+    sessions = await db.load_all_sessions()
+    thread_sessions.update(sessions)
+    if sessions:
+        print(f"[startup] Loaded {len(sessions)} persisted session(s) from DB", flush=True)
     asyncio.create_task(_replay_pending_prompts())
 
 
@@ -225,6 +229,7 @@ async def _run_prompt(
                 oldest = next(iter(thread_sessions))
                 del thread_sessions[oldest]
             thread_sessions[thread.id] = result.session_id
+            await db.set_session_id(str(thread.id), result.session_id)
 
         if not result.success:
             await message.add_reaction("💀")
